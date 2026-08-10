@@ -14,11 +14,11 @@ void createBM(char *dir, int port)
 {
 	char *path = malloc(strlen(dir) + strlen("bm.txt") + 1);
 	sprintf(path, "%sbm.txt", dir);
-	FILE *bm = fopen(path, "w");
+	FILE *bm = fopen(path, "wb");
 
 	path = malloc(strlen(dir) + strlen("inputUI.txt") + 1);
 	sprintf(path, "%sinputUI.txt", dir);
-	FILE *inputUI = fopen(path, "r");
+	FILE *inputUI = fopen(path, "rb");
 	int len;
 	fread(&len, sizeof(int), 1, inputUI);
 	char *messageStr = malloc(len + 1);
@@ -36,13 +36,33 @@ void createBE(char *dir, int port)
 {
 	char *path = malloc(strlen(dir) + strlen("be.txt") + 1);
 	sprintf(path, "%sbe.txt", dir);
-	FILE *be = fopen(path, "w");
+	FILE *be = fopen(path, "wb");
 	if (be == NULL){
 		perror("Failed to create BE file");
 		exit(EXIT_FAILURE);
 	}
 	fwrite(&port, sizeof(int), 1, be);
 	fclose(be);
+}
+
+void writeOutput(char *dir){
+	char *path;	
+	int n;
+	char buffer[BUFLEN];
+
+	path = malloc(strlen(dir) + strlen("eb.txt") + 1);
+	sprintf(path, "%seb.txt", dir);
+	FILE *eb = fopen(path, "rb");
+	fread(&n, sizeof(int), 1, eb);
+	fread(buffer, sizeof(char), n, eb);
+	fclose(eb);
+
+	path = malloc(strlen(dir) + strlen("outputUI.txt") + 1);
+	sprintf(path, "%soutputUI.txt", dir);
+	FILE *outputUI = fopen(path, "wb");
+	fwrite(&n, sizeof(int), 1, outputUI);
+	fwrite(buffer, sizeof(char), n, outputUI);
+	fclose(outputUI);	
 }
 
 void readMsg(char *dir)
@@ -63,7 +83,7 @@ void readMsg(char *dir)
 	
 	char *path = malloc(strlen(dir) + strlen("be.txt") + 1);
 	sprintf(path, "%sbe.txt", dir);
-	FILE *be = fopen(path, "r");
+	FILE *be = fopen(path, "rb");
 	int RECVPORT;
 	fread(&RECVPORT, sizeof(int), 1, be);
 	fclose(be);
@@ -84,18 +104,12 @@ void readMsg(char *dir)
 
 	path = malloc(strlen(dir) + strlen("eb.txt") + 1);
 	sprintf(path, "%seb.txt", dir);
-	FILE *eb = fopen(path, "w");
+	FILE *eb = fopen(path, "wb");
 	fwrite(&n, sizeof(int), 1, eb);
 	fwrite(buffer, sizeof(char), n, eb);
 	fclose(eb);
 
-	path = malloc(strlen(dir) + strlen("outputUI.txt") + 1);
-	sprintf(path, "%soutputUI.txt", dir);
-	FILE *outputUI = fopen(path, "w");
-	fwrite(&n, sizeof(int), 1, outputUI);
-	fwrite(buffer, sizeof(char), n, outputUI);
-	fclose(outputUI);
-
+	writeOutput(dir);
 	printf("data received: %s\n", buffer);
 	close(sockfd);
 }
@@ -107,7 +121,7 @@ void sendMsg(char *dir)
 
 	char *path = malloc(strlen(dir) + strlen("bm.txt") + 1);
 	sprintf(path, "%sbm.txt", dir);
-	FILE *bm = fopen(path, "r");
+	FILE *bm = fopen(path, "rb");
 	int SENDPORT;
 	int len;
 	fread(&SENDPORT, sizeof(int), 1, bm);
@@ -130,7 +144,7 @@ void sendMsg(char *dir)
 
 	path = malloc(strlen(dir) + strlen("mb.txt") + 1);
 	sprintf(path, "%smb.txt", dir);
-	FILE *mb = fopen(path, "w");
+	FILE *mb = fopen(path, "wb");
 	fwrite(&len, sizeof(int), 1, mb);
 	fwrite(messageStr, sizeof(char), len, mb);
 	fclose(mb);
@@ -138,20 +152,11 @@ void sendMsg(char *dir)
 	close(sockfd);
 }
 
-int main(int argc, char *argv[])
-{
-	if(argc < 4 && argc < 5){
-		printf("Usage: ./executable <SENDPORT> <RECVPORT> <DIR_NAME> <FLAG_TO_SEND>\n");
-		exit(1);
-	}
-	int SENDPORT = atoi(argv[1]);
-	int RECVPORT = atoi(argv[2]);
-	char *dir = argv[3];
-
-	// Create a file to store the input message
+// Create a file to store the input message
+void takeInput(char *dir){
 	char *path = malloc(strlen(dir) + strlen("inputUI.txt") + 1);
 	sprintf(path, "%sinputUI.txt", dir);
-	FILE *inputUI = fopen(path, "w");
+	FILE *inputUI = fopen(path, "wb");
 	if (inputUI == NULL)
 	{
 		perror("Failed to create inputUI file");
@@ -168,12 +173,23 @@ int main(int argc, char *argv[])
 	fwrite(&len, sizeof(int), 1, inputUI);
 	fwrite(messagestr, sizeof(char), len, inputUI);
 	fclose(inputUI);
+}
 
-	// Create a file BM to store the port number and message
-	createBM(dir, SENDPORT);
-	
+
+int main(int argc, char *argv[])
+{
+	if(argc < 4 && argc < 5){
+		printf("Usage: ./executable <SENDPORT> <RECVPORT> <DIR_NAME> <FLAG_TO_SEND>\n");
+		exit(1);
+	}
+	int SENDPORT = atoi(argv[1]);
+	int RECVPORT = atoi(argv[2]);
+	char *dir = argv[3];
+
+	printf("Here\n");	
 	// Create a file BE to store the receive port number
 	createBE(dir, RECVPORT);
+
 	printf("Starting the processes...\n");
 
 	pid_t pid = fork();
@@ -188,8 +204,12 @@ int main(int argc, char *argv[])
 	pid = fork();
 	if (pid == 0)
 	{
+		// Create a file BM to store the port number and message
+		takeInput(dir);
+		createBM(dir, SENDPORT);
 		sendMsg(dir);
 	}
+	wait(NULL);
 
 
 }
