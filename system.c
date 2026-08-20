@@ -7,209 +7,268 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include "function.h"
 
 #define BUFLEN 1024
+#define MSG_FIRST 1
+#define MSG_ACK 2
+#define MSG_NORMAL 3
 
-void createBM(char *dir, int port)
+int first = 1;
+
+typedef struct firstMsg
 {
-	char *path = malloc(strlen(dir) + strlen("bm.txt") + 1);
-	sprintf(path, "%sbm.txt", dir);
-	FILE *bm = fopen(path, "wb");
+    uint8_t isFirst;
+    uint16_t portSender;
+    uint8_t earCap;
+    uint8_t mouthCap;
+} firstMsg;
 
-	path = malloc(strlen(dir) + strlen("inputUI.txt") + 1);
-	sprintf(path, "%sinputUI.txt", dir);
-	FILE *inputUI = fopen(path, "rb");
-	int len;
-	fread(&len, sizeof(int), 1, inputUI);
-	char *messageStr = malloc(len + 1);
-	fread(messageStr, sizeof(char), len, inputUI);
-	fclose(inputUI);
-
-	fwrite(&port, sizeof(int), 1, bm);
-	fwrite(&len, sizeof(int), 1, bm);
-	fwrite(messageStr, sizeof(char), len, bm);
-	fclose(bm);
-	free(messageStr);
-}
-
-void createBE(char *dir, int port)
+typedef struct normalMsg
 {
-	char *path = malloc(strlen(dir) + strlen("be.txt") + 1);
-	sprintf(path, "%sbe.txt", dir);
-	FILE *be = fopen(path, "wb");
-	if (be == NULL){
-		perror("Failed to create BE file");
-		exit(EXIT_FAILURE);
-	}
-	fwrite(&port, sizeof(int), 1, be);
-	fclose(be);
-}
+    uint8_t isFirst;
+    uint32_t len;
+    char msg[BUFLEN];
+} normalMsg;
 
-void writeOutput(char *dir){
-	char *path;	
+void writeOutput(char *dir)
+{
 	int n;
 	char buffer[BUFLEN];
 
-	path = malloc(strlen(dir) + strlen("eb.txt") + 1);
-	sprintf(path, "%seb.txt", dir);
-	FILE *eb = fopen(path, "rb");
-	fread(&n, sizeof(int), 1, eb);
-	fread(buffer, sizeof(char), n, eb);
+	firstMsg *fmsg = malloc(sizeof(firstMsg));
+	FILE *eb = openFile(dir, "eb.txt", "rb");
+	if (first == 1)
+	{
+		fread(fmsg, sizeof(firstMsg), 1, eb);
+	}
+	else
+	{
+		fread(&n, sizeof(int), 1, eb);
+		if (n > BUFLEN)
+		{
+			fprintf(stderr, "writeOutput: message length %d exceeds buffer, truncating\n", n);
+			n = BUFLEN;
+		}
+		fread(buffer, sizeof(char), n, eb);
+	}
 	fclose(eb);
 
-	path = malloc(strlen(dir) + strlen("outputUI.txt") + 1);
-	sprintf(path, "%soutputUI.txt", dir);
-	FILE *outputUI = fopen(path, "wb");
-	fwrite(&n, sizeof(int), 1, outputUI);
-	fwrite(buffer, sizeof(char), n, outputUI);
-	fclose(outputUI);	
+	FILE *outputUI = openFile(dir, "outputUI.txt", "wb");
+	if (first == 1)
+	{
+		fwrite(&fmsg->portSender, sizeof(uint16_t), 1, outputUI);
+		fwrite(&fmsg->earCap, sizeof(uint8_t), 1, outputUI);
+		fwrite(&fmsg->mouthCap, sizeof(uint8_t), 1, outputUI);
+	}
+	else
+	{
+		fwrite(&n, sizeof(int), 1, outputUI);
+		fwrite(buffer, sizeof(char), n, outputUI);
+	}
+	fclose(outputUI);
+	free(fmsg);
 }
 
-void readMsg(char *dir)
+
+void recvMsg(char *dir)
 {
-	int sockfd;
-	struct sockaddr_in senderAddr, receiverAddr;
-	char buffer[BUFLEN];
+    struct sockaddr_in senderAddr, receiverAddr;
+    uint8_t buffer[BUFLEN + 5];
 
-	if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
-	{
-		perror("socket system call failed");
-		exit(EXIT_FAILURE);
-	}
+    memset(&receiverAddr, 0, sizeof(receiverAddr));
+    memset(&senderAddr, 0, sizeof(senderAddr));
 
-	memset(&receiverAddr, 0, sizeof(receiverAddr));
-	memset(&senderAddr, 0, sizeof(senderAddr));
+    FILE *be = openFile(dir, "be.txt", "rb");
 
-	
-	char *path = malloc(strlen(dir) + strlen("be.txt") + 1);
-	sprintf(path, "%sbe.txt", dir);
-	FILE *be = fopen(path, "rb");
-	int RECVPORT;
-	fread(&RECVPORT, sizeof(int), 1, be);
-	fclose(be);
-	
-	receiverAddr.sin_family = AF_INET;
-	receiverAddr.sin_addr.s_addr = INADDR_ANY;
-	receiverAddr.sin_port = htons(RECVPORT);
+    int RECVPORT;
+    fread(&RECVPORT, sizeof(int), 1, be);
+    fclose(be);
 
-	if (bind(sockfd, (const struct sockaddr *)&receiverAddr, sizeof(receiverAddr)) < 0)
-	{
-		perror("bind syscall failed");
-		exit(EXIT_FAILURE);
-	}
-	int len = sizeof(senderAddr);
-	printf("Waiting for the data.... \n");
-	int n = recvfrom(sockfd, (char *)buffer, BUFLEN, MSG_WAITALL, (struct sockaddr *)&senderAddr, &len);
-	buffer[n] = '\0';
+    int sockfd = setSocketToSendData(&receiverAddr, RECVPORT);
 
-	path = malloc(strlen(dir) + strlen("eb.txt") + 1);
-	sprintf(path, "%seb.txt", dir);
-	FILE *eb = fopen(path, "wb");
-	fwrite(&n, sizeof(int), 1, eb);
-	fwrite(buffer, sizeof(char), n, eb);
-	fclose(eb);
+    if (bind(sockfd, (struct sockaddr *)&receiverAddr,
+             sizeof(receiverAddr)) < 0)
+    {
+        perror("bind failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+    printf("System 2 receiver started on port %d\n", RECVPORT);
 
-	writeOutput(dir);
-	printf("data received: %s\n", buffer);
-	close(sockfd);
+    while (1)
+    {
+        socklen_t len = sizeof(senderAddr);
+        int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&senderAddr, &len);
+
+        if (n <= 0)
+            continue;
+        uint8_t type = buffer[0];
+
+        if (type == MSG_FIRST)
+        {
+            if (n < 5){
+                printf("Invalid first message\n");
+                continue;
+            }
+
+            uint16_t portSender;
+            uint8_t earCap;
+            uint8_t mouthCap;
+
+            memcpy(&portSender, buffer + 1, sizeof(uint16_t));
+            memcpy(&earCap, buffer + 3, sizeof(uint8_t));
+            memcpy(&mouthCap, buffer + 4, sizeof(uint8_t));
+
+            FILE *eb = openFile(dir, "eb.txt", "wb");
+
+            fwrite(&portSender, sizeof(uint16_t), 1, eb);
+            fwrite(&earCap, sizeof(uint8_t), 1, eb);
+            fwrite(&mouthCap, sizeof(uint8_t), 1, eb);
+
+            fclose(eb);
+            continue;
+        }
+        if (type == MSG_NORMAL)
+        {
+            if (n < 5)
+                continue;
+
+            int msgLen;
+            memcpy(&msgLen, buffer + 1, sizeof(int));
+
+            if (msgLen < 0 || msgLen > BUFLEN)
+                continue;
+
+            if (n < 5 + msgLen)
+                continue;
+
+            char message[BUFLEN + 1];
+
+            memcpy(message, buffer + 5, msgLen);
+            message[msgLen] = '\0';
+            printf("NORMAL MESSAGE: %s\n", message);
+
+            FILE *eb = openFile(dir, "eb.txt", "wb");
+            fwrite(&msgLen, sizeof(int), 1, eb);
+            fwrite(message, sizeof(char), msgLen, eb);
+
+            fclose(eb);
+            continue;
+        }
+        printf("Unknown message type: %u\n", type);
+    }
+    close(sockfd);
+}
+
+void sendFirstMsg(char *dir)
+{
+    struct sockaddr_in receiverAddr;
+    FILE *bm = openFile(dir, "bm.txt", "rb");
+    uint16_t SENDPORT;
+    fread(&SENDPORT, sizeof(uint16_t), 1, bm);
+    int sockfd = setSocketToSendData(&receiverAddr, SENDPORT);
+
+    firstMsg fmsg;
+    fread(&fmsg, sizeof(firstMsg), 1, bm);
+    int n = sendto(sockfd, &fmsg, sizeof(firstMsg), 0, (struct sockaddr *)&receiverAddr, sizeof(receiverAddr));
+
+    printf("First message sent.....\n");
+
+    FILE *mb = openFile(dir, "mb.txt", "wb");
+    fwrite(&n, sizeof(int), 1, mb);
+    fclose(mb);
+
+    fclose(bm);
+    close(sockfd);
 }
 
 void sendMsg(char *dir)
 {
-	struct sockaddr_in receiverAddr;
-	int sockfd;
+    struct sockaddr_in receiverAddr;
+    FILE *bm = openFile(dir, "bm.txt", "rb");
+    uint16_t SENDPORT;
+    int len;
 
-	char *path = malloc(strlen(dir) + strlen("bm.txt") + 1);
-	sprintf(path, "%sbm.txt", dir);
-	FILE *bm = fopen(path, "rb");
-	int SENDPORT;
-	int len;
-	fread(&SENDPORT, sizeof(int), 1, bm);
-	fread(&len, sizeof(int), 1, bm);
-	char *messageStr = malloc(len + 1);
-	fread(messageStr, sizeof(char), len, bm);
-	fclose(bm);
+    fread(&SENDPORT, sizeof(uint16_t), 1, bm);
+    int sockfd = setSocketToSendData(&receiverAddr, SENDPORT);
+    fread(&len, sizeof(int), 1, bm);
+    char buffer[BUFLEN + sizeof(int) + 1];
+    buffer[0] = MSG_NORMAL;
+    memcpy(buffer + 1, &len, sizeof(int));
+    fread(buffer + 1 + sizeof(int), sizeof(char), len, bm);
 
-	if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
-	{
-		perror("socket failed");
-		exit(EXIT_FAILURE);
-	}
-	receiverAddr.sin_family = AF_INET;
-	receiverAddr.sin_port = htons(SENDPORT);
-	receiverAddr.sin_addr.s_addr = INADDR_ANY;
+    int packetSize = 1 + sizeof(int) + len;
+    int n = sendto(sockfd, buffer, packetSize, 0, (struct sockaddr *)&receiverAddr,sizeof(receiverAddr));
 
-	sendto(sockfd, (const char *)messageStr, len, 0, (const struct sockaddr *)&receiverAddr, sizeof(receiverAddr));
-	printf("Data send.....\n");
+    FILE *mb = openFile(dir, "mb.txt", "wb");
+    fwrite(&n, sizeof(int), 1, mb);
+    fclose(mb);
 
-	path = malloc(strlen(dir) + strlen("mb.txt") + 1);
-	sprintf(path, "%smb.txt", dir);
-	FILE *mb = fopen(path, "wb");
-	fwrite(&len, sizeof(int), 1, mb);
-	fwrite(messageStr, sizeof(char), len, mb);
-	fclose(mb);
-	free(messageStr);
-	close(sockfd);
+    fclose(bm);
+    close(sockfd);
 }
-
-// Create a file to store the input message
-void takeInput(char *dir){
-	char *path = malloc(strlen(dir) + strlen("inputUI.txt") + 1);
-	sprintf(path, "%sinputUI.txt", dir);
-	FILE *inputUI = fopen(path, "wb");
-	if (inputUI == NULL)
-	{
-		perror("Failed to create inputUI file");
-		exit(EXIT_FAILURE);
-	}
-	char *messagestr = malloc(BUFLEN);
-	printf("Enter the message to send: ");
-	fgets(messagestr, BUFLEN, stdin);
-	// Remove the newline character from the message if present
-	if (messagestr[strlen(messagestr) - 1] == '\n'){
-		messagestr[strlen(messagestr) - 1] = '\0';
-	}
-	int len = strlen(messagestr);
-	fwrite(&len, sizeof(int), 1, inputUI);
-	fwrite(messagestr, sizeof(char), len, inputUI);
-	fclose(inputUI);
-}
-
 
 int main(int argc, char *argv[])
 {
-	if(argc < 4 && argc < 5){
-		printf("Usage: ./executable <SENDPORT> <RECVPORT> <DIR_NAME> <FLAG_TO_SEND>\n");
-		exit(1);
-	}
-	int SENDPORT = atoi(argv[1]);
-	int RECVPORT = atoi(argv[2]);
-	char *dir = argv[3];
+    if (argc < 3)
+    {
+        printf("Usage: ./executable <RECVPORT> <DIR_NAME>\n");
+        exit(1);
+    }
+    int RECVPORT = atoi(argv[1]);
+    char *dir = argv[2];
+    mkdir(dir, 0777);
+    createBE(dir, RECVPORT);
+    printf("Starting the processes...\n");
+    pid_t receiver = fork();
 
-	printf("Here\n");	
-	// Create a file BE to store the receive port number
-	createBE(dir, RECVPORT);
+    if (receiver == 0)
+    {
+        recvMsg(dir);
+        exit(0);
+    }
+    pid_t sender = fork();
 
-	printf("Starting the processes...\n");
+    if (sender == 0)
+    {
+        takeInput(dir, first);
+        FILE *eb = NULL;
+        uint16_t SENDPORT;
 
-	pid_t pid = fork();
-	if (pid == 0)
-	{
-		readMsg(dir);
-	}
+        while ((eb = openFile(dir, "eb.txt", "rb")) == NULL){
+            printf("Waiting for the first message...\n");
+            sleep(5);
+        }
+        fread(&SENDPORT, sizeof(uint16_t), 1, eb);
+        fclose(eb);
+        createBM(dir, SENDPORT, first);
+        sendFirstMsg(dir);
 
-	if (argc < 5)
-		wait(NULL);
+        eb = openFile(dir, "eb.txt", "rb");
+        if (eb != NULL){
+            fread(&first, sizeof(int), 1, eb);
+            fclose(eb);
+        }
+        while (first == 1)
+        {
+            sleep(5);
+            printf("Retrying to send the first message...\n");
+            sendFirstMsg(dir);
+            eb = openFile(dir, "eb.txt", "rb");
+            if (eb != NULL)
+            {
+                fread(&first, sizeof(int), 1, eb);
+                fclose(eb);
+            }
+        }
+        printf("First message acknowledged.\n");
+        exit(0);
+    }
 
-	pid = fork();
-	if (pid == 0)
-	{
-		// Create a file BM to store the port number and message
-		takeInput(dir);
-		createBM(dir, SENDPORT);
-		sendMsg(dir);
-	}
-	wait(NULL);
+    waitpid(sender, NULL, 0);
+    waitpid(receiver, NULL, 0);
 
-
+    return 0;
 }
