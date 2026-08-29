@@ -55,18 +55,17 @@ void takeInput(char *dir, int first)
 		printf("Enter the message to send:: ");
 		// fgets(messagestr, BUFLEN, stdin);
 		scanf(" %[^\n]s", messagestr); // Read until newline
-		int len = strlen(messagestr);
+		uint16_t len = strlen(messagestr);
 		FILE *inputUI = openFile(dir, "inputUI.txt", "wb");
 		if (inputUI == NULL)
 		{
 			perror("Failed to create inputUI file");
 			exit(EXIT_FAILURE);
 		}
-		fwrite(&len, sizeof(int), 1, inputUI);
+		fwrite(&len, sizeof(uint16_t), 1, inputUI);
 		fwrite(messagestr, sizeof(char), len, inputUI);
 		fclose(inputUI);
 		free(messagestr);
-		printf("msg taken\n");
 	}
 }
 
@@ -96,21 +95,23 @@ void createBM(char *dir, uint16_t SENDPORT, int first)
 		fread(&earCap, sizeof(uint8_t), 1, inputUI);
 		fread(&mouthCap, sizeof(uint8_t), 1, inputUI);
 		uint8_t first = 1;
-		fwrite(&SENDPORT, sizeof(uint16_t), 1, bm);
 		fwrite(&first, sizeof(uint8_t), 1, bm);
+		fwrite(&SENDPORT, sizeof(uint16_t), 1, bm);
 		fwrite(&portSender, sizeof(uint16_t), 1, bm);
 		fwrite(&earCap, sizeof(uint8_t), 1, bm);
 		fwrite(&mouthCap, sizeof(uint8_t), 1, bm);
 	}
 	else
 	{
-		int len;
-		fread(&len, sizeof(int), 1, inputUI);
+		uint16_t len;
+		fread(&len, sizeof(uint16_t), 1, inputUI);
 		char *messageStr = malloc(len + 1);
 		fread(messageStr, sizeof(char), len, inputUI);
 
-		fwrite(&SENDPORT, sizeof(uint16_t), 1, bm);
-		fwrite(&len, sizeof(int), 1, bm);
+		// fwrite(&SENDPORT, sizeof(uint16_t), 1, bm);
+		uint8_t normal = 2;
+		fwrite(&normal, sizeof(uint8_t), 1, bm);
+		fwrite(&len, sizeof(uint16_t), 1, bm);
 		fwrite(messageStr, sizeof(char), len, bm);
 		free(messageStr);
 	}

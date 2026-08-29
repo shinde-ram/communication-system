@@ -12,303 +12,388 @@
 
 #define BUFLEN 1024
 #define MSG_FIRST 1
-#define MSG_ACK 2
-#define MSG_NORMAL 3
+// #define MSG_ACK 2
+#define MSG_NORMAL 2
 
 int first = 1;
 
 typedef struct firstMsg
 {
-	uint8_t isFirst;
-	uint16_t portSender;
-	uint8_t earCap;
-	uint8_t mouthCap;
+    uint8_t isFirst;
+    uint16_t portSender;
+    uint8_t earCap;
+    uint8_t mouthCap;
 } firstMsg;
 
 typedef struct normalMsg
 {
-	uint8_t isFirst;
-	uint32_t len;
-	char msg[BUFLEN];
+    uint8_t isFirst;
+    uint32_t len;
+    char msg[BUFLEN];
 } normalMsg;
+
+typedef struct anotherCapability
+{
+    uint16_t port;
+    uint8_t earCap;
+    uint8_t mouthCap;
+} Acap;
+
+Acap acap;
+firstMsg fmsg;
 
 void writeOutput(char *dir)
 {
-	int n;
-	char buffer[BUFLEN];
+    int n;
+    char buffer[BUFLEN];
 
-	firstMsg *fmsg = malloc(sizeof(firstMsg));
-	FILE *eb = openFile(dir, "eb.txt", "rb");
-	if (first == 1)
-	{
-		fread(fmsg, sizeof(firstMsg), 1, eb);
-	}
-	else
-	{
-		fread(&n, sizeof(int), 1, eb);
-		if (n > BUFLEN)
-		{
-			fprintf(stderr, "writeOutput: message length %d exceeds buffer, truncating\n", n);
-			n = BUFLEN;
-		}
-		fread(buffer, sizeof(char), n, eb);
-	}
-	fclose(eb);
+    firstMsg *fmsgs = malloc(sizeof(firstMsg));
+    FILE *eb = openFile(dir, "eb.txt", "rb");
+    if (eb == NULL)
+    {
+        perror("File not created yet\n");
+        exit(0);
+    }
+    fread(&n, sizeof(int), 1, eb);
+    fread(buffer, sizeof(char), n, eb);
+    fclose(eb);
 
-	FILE *outputUI = openFile(dir, "outputUI.txt", "wb");
-	if (first == 1)
-	{
-		fwrite(&fmsg->portSender, sizeof(uint16_t), 1, outputUI);
-		fwrite(&fmsg->earCap, sizeof(uint8_t), 1, outputUI);
-		fwrite(&fmsg->mouthCap, sizeof(uint8_t), 1, outputUI);
-	}
-	else
-	{
-		fwrite(&n, sizeof(int), 1, outputUI);
-		fwrite(buffer, sizeof(char), n, outputUI);
-	}
-	fclose(outputUI);
-	free(fmsg);
+    FILE *outputUI = openFile(dir, "outputUI.txt", "wb");
+    fwrite(&n, sizeof(int), 1, outputUI);
+    fwrite(buffer, sizeof(char), n, outputUI);
+    fclose(outputUI);
 }
 
 void recvMsg(char *dir)
 {
-	struct sockaddr_in senderAddr, receiverAddr;
-	char buffer[BUFLEN];
+    struct sockaddr_in senderAddr, receiverAddr;
+    uint8_t buffer[BUFLEN + 5];
 
-	memset(&receiverAddr, 0, sizeof(receiverAddr));
-	memset(&senderAddr, 0, sizeof(senderAddr));
+    memset(&receiverAddr, 0, sizeof(receiverAddr));
+    memset(&senderAddr, 0, sizeof(senderAddr));
 
-	FILE *be = openFile(dir, "be.txt", "rb");
+    FILE *be = openFile(dir, "be.txt", "rb");
 
-	int RECVPORT;
-	fread(&RECVPORT, sizeof(int), 1, be);
+    int RECVPORT;
+    fread(&RECVPORT, sizeof(int), 1, be);
+    fclose(be);
 
-	fclose(be);
+    int sockfd = setSocketToSendData(&receiverAddr, RECVPORT);
 
-	int sockfd =
-		setSocketToSendData(&receiverAddr, RECVPORT);
+    if (bind(sockfd, (struct sockaddr *)&receiverAddr, sizeof(receiverAddr)) < 0)
+    {
+        perror("bind failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
 
-	if (bind(sockfd,
-			 (const struct sockaddr *)&receiverAddr,
-			 sizeof(receiverAddr)) < 0)
-	{
-		perror("bind syscall failed");
-		close(sockfd);
-		exit(EXIT_FAILURE);
-	}
+    // printf("EAR: listening on port %d\n", RECVPORT);
+    while (1)
+    {
+        socklen_t len = sizeof(senderAddr);
+        int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&senderAddr, &len);
 
-	printf("System 1 receiver waiting on port %d...\n",
-		   RECVPORT);
+        if (n <= 0)
+            continue;
 
-	while (1)
-	{
-		memset(buffer, 0, sizeof(buffer));
+        /* EAR does not interpret the message.
+           It simply gives the raw packet to BRAIN. */
 
-		socklen_t len = sizeof(senderAddr);
-
-		int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&senderAddr, &len);
-		if (n < 0)
-		{
-			perror("recvfrom failed");
-			continue;
-		}
-
-		if (n == 0)
-			continue;
-
-		uint8_t type = buffer[0];
-		printf("Received packet type: %d\n", type);
-
-		if (type == MSG_FIRST)
-		{
-			printf("ACK received from System 2\n");
-			first = 0;
-
-			FILE *eb = openFile(dir, "eb.txt", "wb");
-
-			fwrite(&first, sizeof(int), 1, eb);
-			fclose(eb);
-			printf("Connection established.\n");
-		}
-		else if (type == MSG_NORMAL)
-		{
-			if (n < 1 + sizeof(int))
-			{
-				printf("Invalid normal message\n");
-				continue;
-			}
-			int msgLen;
-			memcpy(&msgLen, buffer + 1, sizeof(int));
-
-			if (msgLen < 0 || msgLen > BUFLEN - 1 || msgLen > n - 1 - sizeof(int))
-			{
-				printf("Invalid message length\n");
-				continue;
-			}
-
-			char message[BUFLEN];
-			memcpy(message, buffer + 1 + sizeof(int), msgLen);
-			message[msgLen] = '\0';
-
-			printf("Normal message received: %s\n", message);
-
-			FILE *eb = openFile(dir, "eb.txt", "wb");
-
-			fwrite(&msgLen, sizeof(int), 1, eb);
-			fwrite(message, sizeof(char), msgLen, eb);
-			fclose(eb);
-			writeOutput(dir);
-		}
-	}
-
-	close(sockfd);
+        FILE *eb = openFile(dir, "eb.txt", "wb");
+        fwrite(buffer, sizeof(uint8_t), n, eb);
+        fclose(eb);
+        // printf("EAR: received %d bytes\n", n);
+    }
+    close(sockfd);
 }
 
-void sendFirstMsg(char *dir)
+// void sendFirstMsg(char *dir)
+// {
+//     struct sockaddr_in receiverAddr;
+//     FILE *bm = openFile(dir, "bm.txt", "rb");
+//     uint16_t SENDPORT;
+//     fread(&SENDPORT, sizeof(uint16_t), 1, bm);
+//     int sockfd = setSocketToSendData(&receiverAddr, SENDPORT);
+//     firstMsg fmsg;
+//     fread(&fmsg, sizeof(firstMsg), 1, bm);
+//     int n = sendto(sockfd, &fmsg, sizeof(firstMsg), 0, (struct sockaddr *)&receiverAddr, sizeof(receiverAddr));
+//     printf("First message sent.....\n");
+//     FILE *mb = openFile(dir, "mb.txt", "wb");
+//     fwrite(&n, sizeof(int), 1, mb);
+//     fclose(mb);
+//     fclose(bm);
+//     close(sockfd);
+// }
+
+void sendMsg(char *dir)
 {
+    char buffer[BUFLEN];
+
+    uint16_t SENDPORT;
+    uint8_t msgType;
+    uint16_t sequence;
+
+    uint8_t lastType = 0;
+    uint16_t lastSequence = 0;
+    int hasLastMessage = 0;
+
     struct sockaddr_in receiverAddr;
     FILE *bm = openFile(dir, "bm.txt", "rb");
 
-    uint16_t SENDPORT;
-    firstMsg fmsg;
+    while (bm == NULL)
+    {
+        sleep(1);
+        bm = openFile(dir, "bm.txt", "rb");
+    }
 
+    fread(&msgType, sizeof(uint8_t), 1, bm);
     fread(&SENDPORT, sizeof(uint16_t), 1, bm);
-
-    fread(&fmsg.isFirst, sizeof(uint8_t), 1, bm);
-    fread(&fmsg.portSender, sizeof(uint16_t), 1, bm);
-    fread(&fmsg.earCap, sizeof(uint8_t), 1, bm);
-    fread(&fmsg.mouthCap, sizeof(uint8_t), 1, bm);
-
     fclose(bm);
 
-    printf("SENDPORT = %u\n", SENDPORT);
-    printf("isFirst = %u\n", fmsg.isFirst);
-    printf("portSender = %u\n", fmsg.portSender);
-    printf("earCap = %u\n", fmsg.earCap);
-    printf("mouthCap = %u\n", fmsg.mouthCap);
-
+    // printf("MOUTH: SENDPORT = %u\n", SENDPORT);
     int sockfd = setSocketToSendData(&receiverAddr, SENDPORT);
-    uint8_t buffer[5];
+    while (1)
+    {
+        bm = openFile(dir, "bm.txt", "rb");
+        if (bm == NULL)
+            continue;
 
-    buffer[0] = fmsg.isFirst;
-    memcpy(buffer + 1, &fmsg.portSender, sizeof(uint16_t));
+        if (fread(&msgType, sizeof(uint8_t), 1, bm) != 1)
+        {
+            fclose(bm);
+            continue;
+        }
 
-    buffer[3] = fmsg.earCap;
-    buffer[4] = fmsg.mouthCap;
-    int n = sendto(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&receiverAddr, sizeof(receiverAddr));
+        if(msgType == MSG_FIRST && fread(&SENDPORT, sizeof(uint16_t), 1, bm) != 1){
+            fclose(bm);
+            continue;
+        }
 
-    printf("First message sent: %d bytes\n", n);
-    FILE *mb = openFile(dir, "mb.txt", "wb");
-    fwrite(&n, sizeof(int), 1, mb);
-    fclose(mb);
+        if (msgType != MSG_FIRST && fread(&sequence, sizeof(uint16_t), 1, bm) != 1)
+        {
+            fclose(bm);
+            continue;
+        }
+
+        if (hasLastMessage && sequence == lastSequence)
+        {
+            fclose(bm);
+            // printf("MOUTH: Duplicate wait 3 sec\n");
+            sleep(1);
+            continue;
+        }
+
+        fseek(bm, 0, SEEK_SET);
+
+        int msgLen = fread(buffer, 1, BUFLEN, bm);
+        fclose(bm);
+        if (msgLen <= 0)
+            continue;
+
+        int n = sendto(sockfd, buffer, msgLen, 0, (struct sockaddr *)&receiverAddr, sizeof(receiverAddr));
+        // printf("MOUTH: type=%u seq=%u sent=%d bytes\n", msgType, sequence, n);
+
+        lastType = msgType;
+        lastSequence = sequence;
+        hasLastMessage = 1;
+    }
     close(sockfd);
 }
-void sendMsg(char *dir)
+
+void brain(char *dir, int SENDPORT)
 {
-	struct sockaddr_in receiverAddr;
-	FILE *bm = openFile(dir, "bm.txt", "rb");
-	uint16_t SENDPORT;
-	int len;
-	fread(&SENDPORT, sizeof(uint16_t), 1, bm);
-	fread(&len, sizeof(int), 1, bm);
+    uint8_t receivedFirst = 0;
+    uint8_t firstSent = 0;
+    uint8_t connected = 0;
 
-	if (len < 0){
-		fprintf(stderr, "Invalid message length: %d\n", len);
-		fclose(bm);
-		return;
-	}
+    uint8_t lastType = 0;
+    uint16_t lastSequence = 0;
+    uint16_t sendSequence = 1;
 
-	char message[BUFLEN];
-	fread(message, sizeof(char), len, bm);
-	int sockfd = setSocketToSendData(&receiverAddr, SENDPORT);
+    uint16_t waitingAck = 0;
 
-	uint8_t buffer[BUFLEN + 5];
-	uint8_t type = MSG_NORMAL;
+    int waitingForAck = 0;
 
-	memcpy(buffer, &type, sizeof(uint8_t));
-	memcpy(buffer + sizeof(uint8_t), &len, sizeof(int));
-	memcpy(buffer + sizeof(uint8_t) + sizeof(int), message, len);
+    printf("BRAIN: started\n");
+    while (1)
+    {
 
-	int packetLen = sizeof(uint8_t) + sizeof(int) + len;
-	int n = sendto(sockfd, buffer, packetLen, 0, (const struct sockaddr *)&receiverAddr, sizeof(receiverAddr));
-	printf("msg send\n");
-	if (n < 0){
-		perror("sendto failed");
-	}
-	else{
-		printf("Normal message sent: %d bytes\n", n);
-	}
-	fclose(bm);
+        FILE *eb = openFile(dir, "eb.txt", "rb");
 
-	FILE *mb = openFile(dir, "mb.txt", "wb");
-	fwrite(&n, sizeof(int), 1, mb);
-	fclose(mb);
-	close(sockfd);
+        if (eb != NULL)
+        {
+            uint8_t buffer[BUFLEN];
+
+            int n = fread(buffer, 1, BUFLEN, eb);
+            fclose(eb);
+            if (n > 0)
+            {
+                uint8_t type = buffer[0];
+                if (type == MSG_FIRST)
+                {
+                    if (n < 4)
+                    {
+                        // printf("BRAIN: invalid FIRST packet\n");
+                        sleep(1);
+                        continue;
+                    }
+                    if (receivedFirst)
+                    {
+                        // printf("BRAIN: duplicate FIRST received\n");
+                        sleep(1);
+                        continue;
+                    }
+
+                    memcpy(&acap.port, buffer + 3, sizeof(uint16_t));
+                    memcpy(&acap.earCap, buffer + 5, sizeof(uint8_t));
+                    memcpy(&acap.mouthCap, buffer + 6, sizeof(uint8_t));
+
+                    printf("\n");
+                    printf("BRAIN: FIRST received\n");
+                    printf("Other SENDPORT = %u\n", acap.port);
+                    printf("Other EAR CAP = %u\n", acap.earCap);
+                    printf("Other MOUTH CAP  = %u\n", acap.mouthCap);
+
+                    receivedFirst = 1;
+
+                    takeInput(dir, 2);
+                    createBM(dir, SENDPORT, 2);
+
+
+                    firstSent = 1;
+                    // printf("BRAIN: OUR FIRST message created\n");
+                }
+                else if (type == MSG_NORMAL)
+                {
+                    if (n < 1)
+                    {
+                        // printf("BRAIN: invalid NORMAL packet\n");
+                        sleep(1);
+                        continue;
+                    }
+
+                    uint16_t sequence;
+                    memcpy(&sequence, buffer + 1, sizeof(uint16_t));
+
+                    // printf("\nBRAIN: NORMAL received sequence=%u\n", sequence);
+                    if (lastType == MSG_NORMAL && lastSequence == sequence)
+                    {
+                        // printf("BRAIN: duplicate sequence %u\n", sequence);
+                        // FILE *bm = openFile(dir, "bm.txt", "wb");
+                        // if (bm != NULL)
+                        // {
+                        //     uint8_t ackType = MSG_NORMAL;
+                        //     fwrite(&ackType, sizeof(uint8_t), 1, bm);
+                        //     fwrite(&sequence, sizeof(uint16_t), 1, bm);
+                        //     fclose(bm);
+                        //     printf("BRAIN: ACK resent for sequence %u\n", sequence);
+                        // }
+                        sleep(1);
+                        continue;
+                    }
+
+                    int msgLen = n - 1 - sizeof(uint16_t);
+                    if (msgLen >= BUFLEN)
+                        msgLen = BUFLEN - 1;
+
+                    char message[BUFLEN];
+                    memcpy(message, buffer + 5, msgLen);
+                    message[msgLen] = '\0';
+
+                    // printf("BRAIN: message = %s\n", message);
+                    if (!connected && receivedFirst && firstSent)
+                    {
+                        connected = 1;
+                        printf("\n");
+                        // printf(" BRAIN: CONNECTION ESTABLISHED\n");
+                    }
+                    lastType = MSG_NORMAL;
+                    lastSequence = sequence;
+                    FILE *bm = openFile(dir, "bm.txt", "wb");
+                    if (bm != NULL)
+                    {
+                        // uint8_t ackType = MSG_ACK;
+                        // fwrite(&ackType, sizeof(uint8_t), 1, bm);
+                        // fwrite(&sequence, sizeof(uint16_t), 1, bm);
+                        // fclose(bm);
+                        takeInput(dir, 2);
+                        createBM(dir, SENDPORT, 2);
+
+                        // printf("BRAIN: next msg send");
+                    }
+                }
+                // else if (type == MSG_ACK)
+                // {
+                //     if (n < 5)
+                //     {
+                //         printf("BRAIN: invalid ACK packet\n");
+                //         continue;
+                //     }
+
+                //     uint32_t ackSequence;
+                //     memcpy(&ackSequence, buffer + 1, sizeof(uint32_t));
+                //     printf("BRAIN: ACK received for sequence %u\n", ackSequence);
+                //     if (waitingForAck && ackSequence == waitingAck)
+                //     {
+                //         waitingForAck = 0;
+                //         printf("BRAIN: sequence %u successfully delivered\n",ackSequence);
+                //     }
+                // }
+                else
+                {
+                    printf("BRAIN: unknown message type %u\n", type);
+                }
+            }
+        }
+        if (connected)
+        {
+            // printf("Connected\n");
+        }
+
+        sleep(1);
+    }
 }
 
 int main(int argc, char *argv[])
 {
-	if (argc < 4)
-	{
-		printf("Usage: ./executable <SENDPORT> <RECVPORT> <DIR_NAME>\n");
-		exit(1);
-	}
-	uint16_t SENDPORT = atoi(argv[1]);
-	int RECVPORT = atoi(argv[2]);
-	char *dir = argv[3];
+    if (argc < 4)
+    {
+        printf("Usage: ./executable <SENDPORT> <RECVPORT> <DIR_NAME>\n");
+        exit(1);
+    }
+    int SENDPORT = atoi(argv[1]);
+    int RECVPORT = atoi(argv[2]);
+    char *dir = argv[3];
 
-	mkdir(dir, 0777); // Create the directory if it doesn't exist
+    // Remove and recreate dir
+    char *cmd = malloc(sizeof(dir) + 2 + strlen("rm -rf"));
+    sprintf(cmd, "rm -rf \"%s\"", dir);
+    system(cmd);
+    mkdir(dir, 0777);
 
-	// Create a file BE to store the receive port number
-	createBE(dir, RECVPORT);
-	printf("Starting the processes...\n");
+    createBE(dir, RECVPORT);
+    printf("Starting the processes...\n");
 
-	pid_t receiver = fork();
+    pid_t receiver = fork();
+    if (receiver == 0)
+    {
+        recvMsg(dir);
+        exit(0);
+    }
 
-	if (receiver == 0)
-	{
-		recvMsg(dir); // waits for System 2's FIRST message
-		exit(0);
-	}
+    pid_t sender = fork();
+    if (sender == 0)
+    {
+        takeInput(dir, 1);
+        createBM(dir, SENDPORT, 1);
+        sendMsg(dir);
+        exit(0);
+    }
 
-	pid_t sender = fork();
+    brain(dir, SENDPORT);
 
-	if (sender == 0)
-	{
-		/* Take System 1's capabilities */
-		takeInput(dir, first);
+    waitpid(sender, NULL, 0);
+    waitpid(receiver, NULL, 0);
 
-		/* Create FIRST message */
-		createBM(dir, SENDPORT, first);
-
-		while (first == 1)
-		{
-			sendFirstMsg(dir);
-			FILE *eb = openFile(dir, "eb.txt", "rb");
-			if (eb == NULL){
-				sleep(5);
-				printf("Retrying FIRST message...\n");
-				continue;
-			}
-
-			fread(&first, sizeof(int), 1, eb);
-			fclose(eb);
-			if (first == 1){
-				sleep(5);
-				printf("System 2 FIRST message not received. Retrying...\n");
-			}
-		}
-
-		printf("System 2 FIRST message received.\n");
-		takeInput(dir, first);
-		printf("this passs\n");
-		createBM(dir, SENDPORT, first);
-		printf("pass\n");
-		sendMsg(dir);
-		exit(0);
-	}
-
-	waitpid(sender, NULL, 0);
-	waitpid(receiver, NULL, 0);
+    return 0;
 }
