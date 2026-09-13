@@ -10,6 +10,8 @@
 #define BUFLEN 6000
 #define MSG_FIRST 1
 #define MSG_NORMAL 2
+#define MSG_ACK 3
+#define MSG_META 4
 
 int main(int argc, char *argv[]){
     if(argc < 2){
@@ -34,13 +36,15 @@ int main(int argc, char *argv[]){
 
     while (bm == NULL)
     {
-        usleep(1000);
+        usleep(10000);
         bm = openFile(dir, "bm.txt", "rb");
     }
 
     fread(&msgType, sizeof(uint8_t), 1, bm);
     fread(&SENDPORT, sizeof(uint16_t), 1, bm);
     fclose(bm);
+
+    int cnt = 0;
 
     // printf("MOUTH: SENDPORT = %u\n", SENDPORT);
     int sockfd = setSocketToSendData(&receiverAddr, SENDPORT);
@@ -62,19 +66,31 @@ int main(int argc, char *argv[]){
             continue;
         }
 
-        if (msgType != MSG_FIRST && fread(&sequence, sizeof(uint16_t), 1, bm) != 1)
+        if (msgType != MSG_FIRST && msgType != MSG_META && fread(&sequence, sizeof(uint16_t), 1, bm) != 1)
         {
             fclose(bm);
             continue;
         }
 
-        if (hasLastMessage && sequence == lastSequence)
+        if (msgType != MSG_FIRST && msgType != MSG_META && hasLastMessage && sequence == lastSequence)
         {
             fclose(bm);
             // printf("MOUTH: Duplicate wait 3 sec\n");
-            usleep(5000);
+            usleep(1000);
             continue;
         }
+
+        if((lastType == MSG_FIRST && msgType == MSG_FIRST) || (lastType == MSG_META && msgType == MSG_META)){
+            cnt++;
+            if(cnt < 5){
+                fclose(bm);
+                sleep(1);
+                continue;
+            }
+            else
+                cnt = 0;
+        }
+        // printf("MOUTH: Sending message type=%u sequence=%u\n", msgType, sequence);
 
         fseek(bm, 0, SEEK_SET);
 

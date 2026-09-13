@@ -15,6 +15,10 @@ FILE *openFile(const char *dir, const char *filename, const char *mode);
 
 void takeInput(char *dir, int first, Capacity *capacity );
 
+void clearEB(char *dir);
+
+void clearBM(char *dir);
+
 void createBE(char *dir, int RECVPORT);
 
 void createBM(char *dir, uint16_t SENDPORT, int first);

@@ -7,9 +7,10 @@
 #include <sys/types.h>
 #include "fileFunction.h"
 
+#define BUFLEN 1024
+
 int splitParts(char *fileName, int mouthCap, char *dir)
 {
-
     char *cmd = malloc(strlen(dir) + 2 + strlen("rm -rf"));
     sprintf(cmd, "rm -rf \"%s\"", dir);
     system(cmd);
@@ -22,40 +23,32 @@ int splitParts(char *fileName, int mouthCap, char *dir)
         exit(1);
     }
 
-    uint16_t extraForFirst = strlen(fileName) + 3; // 3 byte -> 1 for fileSize and 2 for total seq number
-
     fseek(fp, 0, SEEK_END);
     int totalSize = ftell(fp);
     fseek(fp, 0, SEEK_SET);
+
     int parts = totalSize / (mouthCap - 3); // 1 byte for msgType, 2 byte for sequence number
-    if ((totalSize + extraForFirst) % (mouthCap - 3) > 0)
+    if (totalSize % (mouthCap - 3) > 0)
         parts++;
     int partsLen = mouthCap - 3;
 
     char buffer[partsLen];
     char f[30];
+
     for (int i = 1; i <= parts; i++)
     {
         sprintf(f, "%s/file%d.txt", dir, i);
         FILE *wf = fopen(f, "wb");
         if (wf == NULL)
             continue;
+
         fwrite(&i, sizeof(uint16_t), 1, wf);
-        if (i == 1)
-        {
-            uint8_t fileSize = strlen(fileName);
-            fwrite(&fileSize, sizeof(uint8_t), 1, wf);
-            fwrite(fileName, sizeof(char), fileSize, wf);
-            fwrite(&parts, sizeof(uint16_t), 1, wf);
-        }
         size_t bytesRead;
-        if (i == 1)
-            bytesRead = fread(buffer, 1, partsLen - extraForFirst, fp);
-        else
-            bytesRead = fread(buffer, 1, partsLen, fp);
+        bytesRead = fread(buffer, 1, partsLen, fp);
         fwrite(buffer, 1, bytesRead, wf);
         fclose(wf);
     }
+
     printf("Total size : %d\n", totalSize);
     printf("Number of parts : %d\n", parts);
     printf("Length of each part : %d\n", partsLen);
@@ -73,78 +66,74 @@ void addFileInFolder(char *destDir, uint16_t seq, char *buffer, int msgLen)
     fwrite(&seq, sizeof(uint16_t), 1, wf);
     fwrite(buffer, sizeof(char), msgLen, wf);
     fclose(wf);
-    printf("File saved successfully %d\n", seq);
+    // printf("File saved successfully %d\n", seq);
 }
 
-void combineFile(char *folder)
+void combineCurrentFiles(char *folder, char *fileName)
 {
-    struct dirent *entry;
-    
-    int count = 0;
-    FILE *fp;
-    int i = 1;
-    do
+    char outputPath[300];
+    sprintf(outputPath, "%s/%s", folder, fileName);
+
+    FILE *output = fopen(outputPath, "wb");
+    if (output == NULL){
+        perror("Output file not open");
+        return;
+    }
+
+    uint16_t expectedSequence = 1;
+    while (1)
     {
-        char path[300];
-        
         DIR *dir = opendir(folder);
         if (dir == NULL)
         {
             printf("Cannot open directory.\n");
+            fclose(output);
             return;
         }
+
+        struct dirent *entry;
+        int found = 0;
 
         while ((entry = readdir(dir)) != NULL)
         {
             if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
                 continue;
+
+            char path[300];
             sprintf(path, "%s/%s", folder, entry->d_name);
-            // printf("%s\n", path);
-            FILE *of = fopen(path, "rb");
-            if (of == NULL){
-                perror("not open file");
+
+            if (strcmp(path, outputPath) == 0)
+                continue;
+
+            FILE *part = fopen(path, "rb");
+            if (part == NULL)
+                continue;
+
+            uint16_t sequence;
+            if (fread(&sequence, sizeof(uint16_t), 1, part) != 1)
+            {
+                fclose(part);
                 continue;
             }
-            
-            uint16_t seq;
-            fread(&seq, sizeof(uint16_t), 1, of);
-            if (seq == i)
+
+            if (sequence == expectedSequence)
             {
-                char buffer[6000];
-
-                if (seq == 1)
-                {
-                    uint8_t fileNameSize;
-                    char fileName[30];
-                    fread(&fileNameSize, sizeof(uint8_t), 1, of);
-                    fread(fileName, sizeof(char), fileNameSize, of);
-                    fileName[fileNameSize] = '\0';
-                    fread(&count, sizeof(uint16_t), 1, of);
-
-                    char path[300];
-                    sprintf(path, "%s/%s", folder, fileName);
-                    fp = fopen(path, "wb+");
-                    if (fp == NULL){
-                        perror("File not open : ");
-                        exit(0);
-                    }
-                }
-                int n = fread(buffer, 1, 6000, of);
-                fwrite(buffer, 1, n, fp);
-                fclose(of);
-                i++;
+                uint8_t buffer[BUFLEN];
+                int n = fread(buffer, 1, BUFLEN, part);
+                if (n > 0)
+                    fwrite(buffer, 1, n, output);
+                // printf("Combining sequence = %u with %d bytes\n", sequence, n);
+                found = 1;
+                fclose(part);
                 break;
             }
-            fclose(of);
+            fclose(part);
         }
-        if (i == 1)
-            break;
         closedir(dir);
-    } while (i <= count);
-
-    if (i < count){
-        printf("All files not found\n");
-        exit(0);
+        if (!found)
+            break;
+        expectedSequence++;
     }
-    fclose(fp);
+    fclose(output);
+    printf("File combined successfully: %s\n", outputPath);
 }

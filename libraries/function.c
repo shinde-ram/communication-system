@@ -69,6 +69,20 @@ void takeInput(char *dir, int first, Capacity *capacity)
 	}
 }
 
+void clearEB(char *dir)
+{
+    FILE *eb = openFile(dir, "eb.txt", "wb");
+    if (eb != NULL)
+        fclose(eb);
+}
+
+void clearBM(char *dir)
+{
+    FILE *bm = openFile(dir, "bm.txt", "wb");
+    if (bm != NULL)
+        fclose(bm);
+}
+
 void createBE(char *dir, int port)
 {
 	FILE *be = openFile(dir, "be.txt", "wb");
